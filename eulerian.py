@@ -48,12 +48,6 @@ print(f"Using device: {device}")
 
 # dims: velx,vely, density, cell type, pressure
 
-VELOCITY_X = stype.VELOCITY_X
-VELOCITY_Y = stype.VELOCITY_Y
-DENSITY = stype.DENSITY
-CELL_TYPE = stype.CELL_TYPE
-PRESSURE = stype.PRESSURE
-
 # y  x-->     
 # |  
 # V  
@@ -145,7 +139,7 @@ radius = 10
 for x in range(gridmx-radius, gridmx+radius+1):
     for y in range(gridmy-radius, gridmy+radius+1):
         if (x-gridmx)**2 + (y-gridmy)**2 <= radius**2:
-            state[CELL_TYPE, y, x] = 0
+            state[stype.CELL_TYPE, y, x] = 0
 
 
 
@@ -161,17 +155,17 @@ for x in range(gridmx-radius, gridmx+radius+1):
 
 #set border grid velocity to zero
 
-state[VELOCITY_X, 0, :] = 0
-state[VELOCITY_X, -1, :] = 0
-state[VELOCITY_X, :, 0] = 0
-state[VELOCITY_X, :, 1] = 0
-state[VELOCITY_X, :, -1] = 0
+state[stype.VELOCITY_X, 0, :] = 0
+state[stype.VELOCITY_X, -1, :] = 0
+state[stype.VELOCITY_X, :, 0] = 0
+state[stype.VELOCITY_X, :, 1] = 0
+state[stype.VELOCITY_X, :, -1] = 0
 
-state[VELOCITY_Y, 0, :] = 0
-state[VELOCITY_Y, 1, :] = 0
-state[VELOCITY_Y, -1, :] = 0
-state[VELOCITY_Y, :, 0] = 0
-state[VELOCITY_Y, :, -1] = 0
+state[stype.VELOCITY_Y, 0, :] = 0
+state[stype.VELOCITY_Y, 1, :] = 0
+state[stype.VELOCITY_Y, -1, :] = 0
+state[stype.VELOCITY_Y, :, 0] = 0
+state[stype.VELOCITY_Y, :, -1] = 0
 
 
 #simulation
@@ -218,10 +212,10 @@ def velocity_advection():
     #find average velocity at this position
     #use that average velocity as new u
 
-    vy_avg_tensor = 0.25 * (state[VELOCITY_Y, 1:-1, 1:-1] + state[VELOCITY_Y, 1:-1, :-2] + state[VELOCITY_Y, 2:, 1:-1] + state[VELOCITY_Y, 2:, :-2])
-    vx_avg_tensor = 0.25 * (state[VELOCITY_X, 1:-1, 1:-1] + state[VELOCITY_X, 1:-1, 2:] + state[VELOCITY_X, :-2, 1:-1] + state[VELOCITY_X, :-2, 2:])
+    vy_avg_tensor = 0.25 * (state[stype.VELOCITY_Y, 1:-1, 1:-1] + state[stype.VELOCITY_Y, 1:-1, :-2] + state[stype.VELOCITY_Y, 2:, 1:-1] + state[stype.VELOCITY_Y, 2:, :-2])
+    vx_avg_tensor = 0.25 * (state[stype.VELOCITY_X, 1:-1, 1:-1] + state[stype.VELOCITY_X, 1:-1, 2:] + state[stype.VELOCITY_X, :-2, 1:-1] + state[stype.VELOCITY_X, :-2, 2:])
 
-    prev_x = (pos_middle_tensor[0, 1:-1, 1:-1] - timestep * state[VELOCITY_X, 1:-1, 1:-1]) - 0.5
+    prev_x = (pos_middle_tensor[0, 1:-1, 1:-1] - timestep * state[stype.VELOCITY_X, 1:-1, 1:-1]) - 0.5
     prev_y = pos_tensor[1, 1:-1, 1:-1] - timestep * vy_avg_tensor
 
     prev_x = prev_x.clamp(1.0, x_cells - 2.0)
@@ -244,10 +238,10 @@ def velocity_advection():
     w01 = (1 - xfrac) * yfrac
     w11 = xfrac * yfrac
 
-    m00 = (state[CELL_TYPE, y0, x0] > 0).to(state.dtype)
-    m10 = (state[CELL_TYPE, y0, x1] > 0).to(state.dtype)
-    m01 = (state[CELL_TYPE, y1, x0] > 0).to(state.dtype)
-    m11 = (state[CELL_TYPE, y1, x1] > 0).to(state.dtype)
+    m00 = (state[stype.CELL_TYPE, y0, x0] > 0).to(state.dtype)
+    m10 = (state[stype.CELL_TYPE, y0, x1] > 0).to(state.dtype)
+    m01 = (state[stype.CELL_TYPE, y1, x0] > 0).to(state.dtype)
+    m11 = (state[stype.CELL_TYPE, y1, x1] > 0).to(state.dtype)
 
     valid_weights = torch.stack(
         (w00 * m00, w10 * m10, w01 * m01, w11 * m11)
@@ -255,10 +249,10 @@ def velocity_advection():
     weight_sum = valid_weights.sum(dim=0)
 
     weighted_density = (
-        w00 * m00 * state[VELOCITY_X, y0, x0]
-        + w10 * m10 * state[VELOCITY_X, y0, x1]
-        + w01 * m01 * state[VELOCITY_X, y1, x0]
-        + w11 * m11 * state[VELOCITY_X, y1, x1]
+        w00 * m00 * state[stype.VELOCITY_X, y0, x0]
+        + w10 * m10 * state[stype.VELOCITY_X, y0, x1]
+        + w01 * m01 * state[stype.VELOCITY_X, y1, x0]
+        + w11 * m11 * state[stype.VELOCITY_X, y1, x1]
     )
 
     vx = torch.where(
@@ -270,7 +264,7 @@ def velocity_advection():
     #interpolate y-vel at previous position
 
     prev_x = pos_tensor[0,1:-1,1:-1] - timestep * vx_avg_tensor
-    prev_y = (pos_middle_tensor[1,1:-1,1:-1] - timestep * state[VELOCITY_Y, 1:-1, 1:-1]) - 0.5
+    prev_y = (pos_middle_tensor[1,1:-1,1:-1] - timestep * state[stype.VELOCITY_Y, 1:-1, 1:-1]) - 0.5
 
     prev_x = prev_x.clamp(1.0, x_cells - 2.0)
     prev_y = prev_y.clamp(1.0, y_cells - 2.0)
@@ -290,10 +284,10 @@ def velocity_advection():
     w01 = (1 - xfrac) * yfrac
     w11 = xfrac * yfrac
 
-    m00 = (state[CELL_TYPE, y0, x0] > 0).to(state.dtype)
-    m10 = (state[CELL_TYPE, y0, x1] > 0).to(state.dtype)
-    m01 = (state[CELL_TYPE, y1, x0] > 0).to(state.dtype)
-    m11 = (state[CELL_TYPE, y1, x1] > 0).to(state.dtype)
+    m00 = (state[stype.CELL_TYPE, y0, x0] > 0).to(state.dtype)
+    m10 = (state[stype.CELL_TYPE, y0, x1] > 0).to(state.dtype)
+    m01 = (state[stype.CELL_TYPE, y1, x0] > 0).to(state.dtype)
+    m11 = (state[stype.CELL_TYPE, y1, x1] > 0).to(state.dtype)
 
     valid_weights = torch.stack(
         (w00 * m00, w10 * m10, w01 * m01, w11 * m11)
@@ -301,10 +295,10 @@ def velocity_advection():
     weight_sum = valid_weights.sum(dim=0)
 
     weighted_density = (
-        w00 * m00 * state[VELOCITY_Y, y0, x0]
-        + w10 * m10 * state[VELOCITY_Y, y0, x1]
-        + w01 * m01 * state[VELOCITY_Y, y1, x0]
-        + w11 * m11 * state[VELOCITY_Y, y1, x1]
+        w00 * m00 * state[stype.VELOCITY_Y, y0, x0]
+        + w10 * m10 * state[stype.VELOCITY_Y, y0, x1]
+        + w01 * m01 * state[stype.VELOCITY_Y, y1, x0]
+        + w11 * m11 * state[stype.VELOCITY_Y, y1, x1]
     )
 
     vy = torch.where(
@@ -313,14 +307,14 @@ def velocity_advection():
         torch.zeros_like(weighted_density),
     )
 
-    state[VELOCITY_X, 1:-1, 1:-1] = vx * state[CELL_TYPE, 1:-1, 1:-1]
-    state[VELOCITY_Y, 1:-1, 1:-1] = vy * state[CELL_TYPE, 1:-1, 1:-1]
+    state[stype.VELOCITY_X, 1:-1, 1:-1] = vx * state[stype.CELL_TYPE, 1:-1, 1:-1]
+    state[stype.VELOCITY_Y, 1:-1, 1:-1] = vy * state[stype.CELL_TYPE, 1:-1, 1:-1]
 
 def smoke_advection():
     global state
 
-    vx_avg_tensor = 0.5 * (state[VELOCITY_X, 1:-1, 1:-1] + state[VELOCITY_X, 1:-1, 2:])
-    vy_avg_tensor = 0.5 * (state[VELOCITY_Y, 1:-1, 1:-1] + state[VELOCITY_Y, 2:, 1:-1])
+    vx_avg_tensor = 0.5 * (state[stype.VELOCITY_X, 1:-1, 1:-1] + state[stype.VELOCITY_X, 1:-1, 2:])
+    vy_avg_tensor = 0.5 * (state[stype.VELOCITY_Y, 1:-1, 1:-1] + state[stype.VELOCITY_Y, 2:, 1:-1])
 
     prev_x = pos_tensor[0, 1:-1, 1:-1] - timestep * vx_avg_tensor
     prev_y = pos_tensor[1, 1:-1, 1:-1] - timestep * vy_avg_tensor
@@ -341,10 +335,10 @@ def smoke_advection():
     w01 = (1 - xfrac) * yfrac
     w11 = xfrac * yfrac
 
-    m00 = (state[CELL_TYPE, y0, x0] > 0).to(state.dtype)
-    m10 = (state[CELL_TYPE, y0, x1] > 0).to(state.dtype)
-    m01 = (state[CELL_TYPE, y1, x0] > 0).to(state.dtype)
-    m11 = (state[CELL_TYPE, y1, x1] > 0).to(state.dtype)
+    m00 = (state[stype.CELL_TYPE, y0, x0] > 0).to(state.dtype)
+    m10 = (state[stype.CELL_TYPE, y0, x1] > 0).to(state.dtype)
+    m01 = (state[stype.CELL_TYPE, y1, x0] > 0).to(state.dtype)
+    m11 = (state[stype.CELL_TYPE, y1, x1] > 0).to(state.dtype)
 
     valid_weights = torch.stack(
         (w00 * m00, w10 * m10, w01 * m01, w11 * m11)
@@ -352,10 +346,10 @@ def smoke_advection():
     weight_sum = valid_weights.sum(dim=0)
 
     weighted_density = (
-        w00 * m00 * state[DENSITY, y0, x0]
-        + w10 * m10 * state[DENSITY, y0, x1]
-        + w01 * m01 * state[DENSITY, y1, x0]
-        + w11 * m11 * state[DENSITY, y1, x1]
+        w00 * m00 * state[stype.DENSITY, y0, x0]
+        + w10 * m10 * state[stype.DENSITY, y0, x1]
+        + w01 * m01 * state[stype.DENSITY, y1, x0]
+        + w11 * m11 * state[stype.DENSITY, y1, x1]
     )
 
     density = torch.where(
@@ -364,7 +358,7 @@ def smoke_advection():
         torch.zeros_like(weighted_density),
     )
 
-    state[DENSITY, 1:-1, 1:-1] = density * state[CELL_TYPE, 1:-1, 1:-1]
+    state[stype.DENSITY, 1:-1, 1:-1] = density * state[stype.CELL_TYPE, 1:-1, 1:-1]
    
 def add_force():
 
@@ -376,10 +370,10 @@ def add_flow():
     #apply flow to state
     #only apply where flow is nonzero
 
-    state[VELOCITY_X] = torch.where(flow[VELOCITY_X] != 0, flow[VELOCITY_X], state[VELOCITY_X])
-    state[VELOCITY_Y] = torch.where(flow[VELOCITY_Y] != 0, flow[VELOCITY_Y], state[VELOCITY_Y])
-    state[DENSITY] = torch.where(flow[DENSITY] != 0, flow[DENSITY], state[DENSITY])
-    state[PRESSURE] = torch.where(flow[3] != 0, flow[3], state[3])
+    state[stype.VELOCITY_X] = torch.where(flow[stype.VELOCITY_X] != 0, flow[stype.VELOCITY_X], state[stype.VELOCITY_X])
+    state[stype.VELOCITY_Y] = torch.where(flow[stype.VELOCITY_Y] != 0, flow[stype.VELOCITY_Y], state[stype.VELOCITY_Y])
+    state[stype.DENSITY] = torch.where(flow[stype.DENSITY] != 0, flow[stype.DENSITY], state[stype.DENSITY])
+    state[stype.PRESSURE] = torch.where(flow[stype.PRESSURE] != 0, flow[stype.PRESSURE], state[stype.PRESSURE])
 
 # draw simulation
 
@@ -442,14 +436,14 @@ while running:
 
         if 0 <= gridmx < x_cells-1 and 0 <= gridmy < y_cells-1:
             
-            state[DENSITY, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += 1 # Add density in a 4x4 area around mouse
+            state[stype.DENSITY, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += 1 # Add density in a 4x4 area around mouse
 
             if prev_mouse_pos:
                 pmx, pmy = prev_mouse_pos
                 gridpmx, gridpmy = int(pmx * x_cells / SCREEN_WIDTH), int(pmy * y_cells / SCREEN_HEIGHT)
 
-                state[0, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += (mx - pmx) * 2.0 #add velocity when dragging w/mouse
-                state[1, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += (my - pmy) * 2.0 #add velocity when dragging w/mouse
+                state[stype.VELOCITY_X, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += (mx - pmx) * 2.0 #add velocity when dragging w/mouse
+                state[stype.VELOCITY_Y, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += (my - pmy) * 2.0 #add velocity when dragging w/mouse
         prev_mouse_pos = (mx, my)
     else:
         prev_mouse_pos = None
