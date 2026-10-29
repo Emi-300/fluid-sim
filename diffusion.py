@@ -5,10 +5,10 @@ import state_config as stype
 
 def diffusion(state,red_cells,black_cells,diffusion_steps=10,diffusion_overrelaxation = 1.0, density = 1.0, cell_width = 1.0, timestep = 1.0):
 
-    divergence_tensor = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1]
-                            - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2]
-                            + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1]
-                            - state[stype.VELOCITY_Y, 1:-1, 1:-1] * state[stype.CELL_TYPE, :-2, 1:-1])
+    divergence_tensor = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, 2:]
+                            - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2] * state[stype.CELL_TYPE, 1:-1, 1:-1]
+                            + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 2:, 1:-1]
+                            - state[stype.VELOCITY_Y, 1:-1, 1:-1] * state[stype.CELL_TYPE, :-2, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1])
     
     
     neighbors_matrix = state[stype.CELL_TYPE, 1:-1, :-2] + state[stype.CELL_TYPE, 1:-1, 2:] + state[stype.CELL_TYPE, :-2, 1:-1] + state[stype.CELL_TYPE, 2:, 1:-1]
@@ -22,11 +22,10 @@ def diffusion(state,red_cells,black_cells,diffusion_steps=10,diffusion_overrelax
 #times how long the pressure solver takes
 def diffusion_timed(state,red_cells,black_cells, device, diffusion_steps=10,diffusion_overrelaxation = 1.0, density = 1.0, cell_width = 1.0, timestep = 1.0):
 
-    divergence_tensor = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1]
-                            - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2]
-                            + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1]
-                            - state[stype.VELOCITY_Y, 1:-1, 1:-1] * state[stype.CELL_TYPE, :-2, 1:-1])
-    
+    divergence_tensor = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, 2:]
+                            - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2] * state[stype.CELL_TYPE, 1:-1, 1:-1]
+                            + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 2:, 1:-1]
+                            - state[stype.VELOCITY_Y, 1:-1, 1:-1] * state[stype.CELL_TYPE, :-2, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1])    
     
     neighbors_matrix = state[stype.CELL_TYPE, 1:-1, :-2] + state[stype.CELL_TYPE, 1:-1, 2:] + state[stype.CELL_TYPE, :-2, 1:-1] + state[stype.CELL_TYPE, 2:, 1:-1]
 

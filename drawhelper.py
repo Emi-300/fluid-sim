@@ -94,8 +94,11 @@ def drawuvfield(state,y_cells,x_cells,device):
     return rgb_tensor
 
 def drawdivergencefield(state,y_cells,x_cells,device):
-    divergence = (state[stype.VELOCITY_X, 1:-1, 2:] - state[stype.VELOCITY_X, 1:-1, 1:-1] + state[stype.VELOCITY_Y, 2:, 1:-1] - state[stype.VELOCITY_Y, 1:-1, 1:-1] )
-
+    divergence = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, 2:]
+                            - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2] * state[stype.CELL_TYPE, 1:-1, 1:-1]
+                            + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 2:, 1:-1]
+                            - state[stype.VELOCITY_Y, 1:-1, 1:-1] * state[stype.CELL_TYPE, :-2, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1])
+    
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
 
     rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-divergence*100, 0, 255).to(torch.uint8) # Red - negative divergence
