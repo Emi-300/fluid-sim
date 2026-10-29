@@ -7,12 +7,15 @@ import numpy as np
 from PIL import Image
 from time import perf_counter
 
-
+import diffusion
+import state_config as stype
+import drawhelper
 
 # read config file
 # for now, hardcode variables
 
-#TODO add different smoke types
+#TODO add different smoke types w/different densities
+#want to test flow instabilities
 
 
 FPS = 120
@@ -45,11 +48,11 @@ print(f"Using device: {device}")
 
 # dims: velx,vely, density, cell type, pressure
 
-VELOCITY_X = 0
-VELOCITY_Y = 1
-DENSITY = 2
-CELL_TYPE = 3
-PRESSURE = 4
+VELOCITY_X = stype.VELOCITY_X
+VELOCITY_Y = stype.VELOCITY_Y
+DENSITY = stype.DENSITY
+CELL_TYPE = stype.CELL_TYPE
+PRESSURE = stype.PRESSURE
 
 # y  x-->     
 # |  
@@ -180,7 +183,6 @@ red_cells = (row_indices + column_indices) % 2 == 0
 black_cells = ~red_cells
 
 
-
 def update():
     global state, advect_solve_ms, pressure_solve_ms
 
@@ -188,7 +190,9 @@ def update():
 
     add_force()
 
-    diffusion()
+    #time overall diffusion step
+
+    pressure_solve_ms = diffusion.diffusion_timed(state, red_cells, black_cells,device, diffusion_steps,diffusion_overrelaxation, density, cell_width, timestep)
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -202,84 +206,6 @@ def update():
         torch.cuda.synchronize(device)
     advect_solve_ms = (perf_counter() - start) * 1000
 
-def diffusion():
-
-    global state, pressure_solve_ms
-
-    #diffusion gives weird checkerboard pattern -> fix later
-    
-    divergence_tensor = (state[0, 1:-1, 2:] * state[CELL_TYPE, 1:-1, 1:-1]
-                        - state[0, 1:-1, 1:-1] * state[CELL_TYPE, 1:-1, :-2]
-                        + state[1, 2:, 1:-1] * state[CELL_TYPE, 1:-1, 1:-1]
-                        - state[1, 1:-1, 1:-1] * state[CELL_TYPE, :-2, 1:-1])
-
-    kernel_matrix = torch.tensor(         [[0.0, 1, 0.0],
-                                              [1, 0.0, 1],
-                                              [0.0, 1, 0.0]], device=device)
-        
-    kernel = kernel_matrix.view(1, 1, 3, 3)
-
-    neighbors_matrix = F.conv2d(state[CELL_TYPE].unsqueeze(0).unsqueeze(0), kernel).squeeze()
-
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    start = perf_counter()
-
-    for _ in range(diffusion_steps):
-
-       findpressure(divergence_tensor, neighbors_matrix,red_cells,black_cells)
-
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    pressure_solve_ms = (perf_counter() - start) * 1000
-    
-    updatevelocity()
-
-def findpressure(divergence_tensor, neighbors_matrix, red_cells, black_cells):
-
-    global state
-
-    #mask so no divide by zero errors occurr
-
-    fluid_mask = state[CELL_TYPE, 1:-1, 1:-1] > 0
-    active_cells = fluid_mask & (neighbors_matrix > 0)
-    safe_neighbors = neighbors_matrix.clamp_min(1)
-
-    #gauss-seidel iteration
-    #potential optimizations - multigrid solver
-    #                        - store edge data within tensor                   
-
-    #pressure equation: average neighbor pressure - (density)(width / timestep) * (divergence)
-    #update red cells
-
-    average_pressure_tensor = (state[PRESSURE, 1:-1, :-2] + state[PRESSURE, 1:-1, 2:] + state[PRESSURE, :-2, 1:-1] + state[PRESSURE, 2:, 1:-1]) * fluid_mask
-
-    new_pressure_tensor = (average_pressure_tensor - (density * cell_width / timestep) * divergence_tensor) / safe_neighbors
-    pressure = state[PRESSURE, 1:-1, 1:-1]
-    pressure[...] = torch.where(
-        red_cells & active_cells,
-        pressure + diffusion_overrelaxation * (new_pressure_tensor - pressure),
-        torch.where(active_cells, pressure, torch.zeros_like(pressure)),
-    )
-
-    #update black cells
-
-    average_pressure_tensor = (state[PRESSURE, 1:-1, :-2] + state[PRESSURE, 1:-1, 2:] + state[PRESSURE, :-2, 1:-1] + state[PRESSURE, 2:, 1:-1]) * fluid_mask
-
-    new_pressure_tensor = (average_pressure_tensor - (density * cell_width / timestep) * divergence_tensor) / safe_neighbors
-    pressure = state[PRESSURE, 1:-1, 1:-1]
-    pressure[...] = torch.where(
-        black_cells & active_cells,
-        pressure + diffusion_overrelaxation * (new_pressure_tensor - pressure),
-        torch.where(active_cells, pressure, torch.zeros_like(pressure)),
-    )
-
-def updatevelocity():
-
-    #don't update non-fluid cells
-
-    state[VELOCITY_X, 1:-1, 1:-1] -= (timestep / (density * cell_width)) * (state[PRESSURE, 1:-1, 1:-1] - state[PRESSURE, 1:-1, :-2]) * state[CELL_TYPE,1:-1,1:-1] * state[CELL_TYPE,1:-1,:-2] #making sure velocity is not coming from or going to solid cell
-    state[VELOCITY_Y, 1:-1, 1:-1] -= (timestep / (density * cell_width)) * (state[PRESSURE, 1:-1, 1:-1] - state[PRESSURE, :-2, 1:-1]) * state[CELL_TYPE,1:-1,1:-1] * state[CELL_TYPE,:-2,1:-1]
 
 #TODO consolidate interpolation into its own function
 #     break up backtrace into multiple smaller steps and stop at first solid obstacle
@@ -439,8 +365,7 @@ def smoke_advection():
     )
 
     state[DENSITY, 1:-1, 1:-1] = density * state[CELL_TYPE, 1:-1, 1:-1]
-
-     
+   
 def add_force():
 
     global states
@@ -466,10 +391,7 @@ SCREEN_HEIGHT = 700
 pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), DOUBLEBUF | OPENGL)
 pygame.display.set_caption("Fluid Sim")
 
-#framerate
 clock = pygame.time.Clock()
-
-#Set max fps - FPS = 60
 
 #---GPU rendering setup---
 
@@ -478,132 +400,16 @@ ctx = moderngl.create_context()
 
 #create texture
 texture = ctx.texture((x_cells, y_cells), 3, dtype='f1') # 3 channels (RGB), unsigned byte
-texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # Smooth upscaling
-
-# Setup simple texture rendering program (Quad shader)
-quad_program = ctx.program(
-    vertex_shader='''
-        #version 330
-        in vec2 in_vert;
-        in vec2 in_texcoord;
-        out vec2 v_texcoord;
-        void main() {
-            gl_Position = vec4(in_vert, 0.0, 1.0);
-            v_texcoord = in_texcoord;
-        }
-    ''',
-    fragment_shader='''
-        #version 330
-        uniform sampler2D Texture;
-        in vec2 v_texcoord;
-        out vec4 f_color;
-        void main() {
-            f_color = texture(Texture, v_texcoord);
-        }
-    '''
-)
-
-
-
-# Render vertices mapping to screen boundaries
-vertices = ctx.buffer(np.array([
-    -1.0,  1.0,   0.0, 0.0, # Top Left
-    -1.0, -1.0,   0.0, 1.0, # Bottom Left
-     1.0,  1.0,   1.0, 0.0, # Top Right
-     1.0, -1.0,   1.0, 1.0, # Bottom Right
-], dtype=np.float32))
+texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # Chunky upscaling
 
 #setup vertex array object
-vao = ctx.vertex_array(quad_program, [(vertices, '2f 2f', 'in_vert', 'in_texcoord')])
+vao = drawhelper.setup_vao(ctx)
 
 #nice draw functions
 
-
-def drawvelfield():
-    # velocity field 
-    display_vel_x = torch.clamp(state[0] * 15, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
-    display_vel_y = torch.clamp(state[1] * 15, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-    rgb_tensor[..., 0] = display_vel_x  # Red
-    rgb_tensor[..., 1] = display_vel_y  # Green
-
-    return rgb_tensor
-
-def drawspeedfield():
-    display_speed = torch.sqrt(state[VELOCITY_X]**2 + state[VELOCITY_Y]**2)
-    display_speed = torch.clamp(display_speed * 15, 0, 255).to(torch.uint8) # speed magnitude, somewhat normalized
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-    rgb_tensor[..., 0] = display_speed  # Red
-    rgb_tensor[..., 1] = display_speed  # Green
-    rgb_tensor[..., 2] = display_speed * 0.5  # Blue
-
-    return rgb_tensor
-
-def drawdensityfield():
-    display_density = torch.clamp(state[2] * 255, 0, 255).to(torch.uint8) # density magnitude, somewhat normalized
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-    rgb_tensor[..., 0] = display_density   # Red
-    rgb_tensor[..., 1] = display_density   # Green
-    rgb_tensor[..., 2] = display_density   # Blue
-
-    return rgb_tensor
-
-def drawpressurefield():
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-
-    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-state[4, 1:-1, 1:-1] *10, 0, 255).to(torch.uint8) # Red - negative divergence
-    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(state[4, 1:-1, 1:-1] *10, 0, 255).to(torch.uint8)  # Blue - positive divergence
-
-    return rgb_tensor
-
-def drawuvfield():
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-
-    #x in red, y in green
-
-    rgb_tensor[..., 0] = torch.clamp(state[0] *(255/x_cells), 0, 255).to(torch.uint8)  # Red
-    rgb_tensor[..., 1] = torch.clamp(state[1] *(255/y_cells), 0, 255).to(torch.uint8)  # Green
-
-    return rgb_tensor
-
-def drawdivergencefield():
-    divergence = (state[0, 1:-1, 2:] - state[0, 1:-1, 1:-1] + state[1, 2:, 1:-1] - state[1, 1:-1, 1:-1] )
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-
-    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-divergence*100, 0, 255).to(torch.uint8) # Red - negative divergence
-    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(divergence*100, 0, 255).to(torch.uint8)  # Blue - positive divergence
-
-    return rgb_tensor
-
-def drawsolidcells():
-
-    kernel_matrix = torch.tensor([[0.0, 1.0, 0.0],
-                                          [1.0, 0.0, 1.0],
-                                          [0.0, 1.0, 0.0]], device=device)
-    
-    kernel = kernel_matrix.view(1, 1, 3, 3)
-    
-    #padding is already built in
-    #in diffusion function to allow for dynamic movement of obstacles
-    
-    solid_neighbors = F.conv2d(state[3].unsqueeze(0).unsqueeze(0), kernel).squeeze()
-
-    # Solid cells are represented by a specific color, e.g., white
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-
-    rgb_tensor[1:-1, 1:-1, 0] = 85 * solid_neighbors // 3 # Red
-    rgb_tensor[1:-1, 1:-1, 1] = 85 * solid_neighbors // 2  # Green
-    rgb_tensor[1:-1, 1:-1, 2] = 85 * solid_neighbors  # Blue
-
-    return rgb_tensor
-
 running = True
 prev_mouse_pos = None
+viewmode = 0
 
 while running:
 
@@ -618,6 +424,14 @@ while running:
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
                 pass
+            if event.key == pygame.K_1:
+                viewmode = 0
+            if event.key == pygame.K_2:
+                viewmode = 1
+            if event.key == pygame.K_3:
+                viewmode = 2
+            if event.key == pygame.K_4:
+                viewmode = 3
 
 
 
@@ -644,8 +458,16 @@ while running:
     update()
 
     
-
-    rgb_tensor = drawdensityfield()
+    if viewmode == 0:
+        rgb_tensor = drawhelper.drawdensityfield(state, y_cells, x_cells, device)
+    elif viewmode == 1:
+        rgb_tensor = drawhelper.drawspeedfield(state, y_cells, x_cells, device)
+    elif viewmode == 2:
+        rgb_tensor = drawhelper.drawpressurefield(state, y_cells, x_cells, device)
+    elif viewmode == 3:
+        rgb_tensor = drawhelper.drawdivergencefield(state, y_cells, x_cells, device)
+    else:
+        rgb_tensor = drawhelper.drawdensityfield(state, y_cells, x_cells, device)
 
    
     
