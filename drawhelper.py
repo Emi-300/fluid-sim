@@ -42,19 +42,19 @@ def setup_vao(ctx):
     return vao
 
 
-def drawvelocityfield(state,y_cells,x_cells,device):
+def drawvelocityfield(state,y_cells,x_cells,device,brightness=15):
     # velocity field 
-    display_vel_x = torch.clamp(state[stype.VELOCITY_X] * 15, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
-    display_vel_y = torch.clamp(state[stype.VELOCITY_Y] * 15, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
+    display_vel_x = torch.clamp(state[stype.VELOCITY_X] * brightness, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
+    display_vel_y = torch.clamp(state[stype.VELOCITY_Y] * brightness, 0, 255).to(torch.uint8) # velocity magnitude, somewhat normalized
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
     rgb_tensor[..., 0] = display_vel_x  # Red
     rgb_tensor[..., 1] = display_vel_y  # Green
 
     return rgb_tensor
 
-def drawspeedfield(state,y_cells,x_cells,device):
+def drawspeedfield(state,y_cells,x_cells,device,brightness = 15):
     display_speed = torch.sqrt(state[stype.VELOCITY_X]**2 + state[stype.VELOCITY_Y]**2)
-    display_speed = torch.clamp(display_speed * 15, 0, 255).to(torch.uint8) # speed magnitude, somewhat normalized
+    display_speed = torch.clamp(display_speed * brightness, 0, 255).to(torch.uint8) # speed magnitude, somewhat normalized
 
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
     rgb_tensor[..., 0] = display_speed  # Red
@@ -63,8 +63,8 @@ def drawspeedfield(state,y_cells,x_cells,device):
 
     return rgb_tensor
 
-def drawdensityfield(state,y_cells,x_cells,device):
-    display_density = torch.clamp(state[stype.DENSITY] * 255, 0, 255).to(torch.uint8) # density magnitude, somewhat normalized
+def drawdensityfield(state,y_cells,x_cells,device,brightness=255):
+    display_density = torch.clamp(state[stype.DENSITY] * brightness, 0, 255).to(torch.uint8) # density magnitude, somewhat normalized
 
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
     rgb_tensor[..., 0] = display_density   # Red
@@ -73,27 +73,16 @@ def drawdensityfield(state,y_cells,x_cells,device):
 
     return rgb_tensor
 
-def drawpressurefield(state,y_cells,x_cells,device):
+def drawpressurefield(state,y_cells,x_cells,device,brightness=10):
 
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
 
-    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-state[stype.PRESSURE, 1:-1, 1:-1] *10, 0, 255).to(torch.uint8) # Red - negative divergence
-    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(state[stype.PRESSURE, 1:-1, 1:-1] *10, 0, 255).to(torch.uint8)  # Blue - positive divergence
+    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-state[stype.PRESSURE, 1:-1, 1:-1] *brightness, 0, 255).to(torch.uint8) # Red - negative divergence
+    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(state[stype.PRESSURE, 1:-1, 1:-1] *brightness, 0, 255).to(torch.uint8)  # Blue - positive divergence
 
     return rgb_tensor
 
-def drawuvfield(state,y_cells,x_cells,device):
-
-    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-
-    #x in red, y in green
-
-    rgb_tensor[..., 0] = torch.clamp(state[stype.VELOCITY_X] *(255/x_cells), 0, 255).to(torch.uint8)  # Red
-    rgb_tensor[..., 1] = torch.clamp(state[stype.VELOCITY_Y] *(255/y_cells), 0, 255).to(torch.uint8)  # Green
-
-    return rgb_tensor
-
-def drawdivergencefield(state,y_cells,x_cells,device):
+def drawdivergencefield(state,y_cells,x_cells,device,brightness=100):
     divergence = (state[stype.VELOCITY_X, 1:-1, 2:] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, 2:]
                             - state[stype.VELOCITY_X, 1:-1, 1:-1] * state[stype.CELL_TYPE, 1:-1, :-2] * state[stype.CELL_TYPE, 1:-1, 1:-1]
                             + state[stype.VELOCITY_Y, 2:, 1:-1] * state[stype.CELL_TYPE, 1:-1, 1:-1] * state[stype.CELL_TYPE, 2:, 1:-1]
@@ -101,8 +90,8 @@ def drawdivergencefield(state,y_cells,x_cells,device):
     
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
 
-    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-divergence*100, 0, 255).to(torch.uint8) # Red - negative divergence
-    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(divergence*100, 0, 255).to(torch.uint8)  # Blue - positive divergence
+    rgb_tensor[1:-1, 1:-1, 0] = torch.clamp(-divergence*brightness, 0, 255).to(torch.uint8) # Red - negative divergence
+    rgb_tensor[1:-1, 1:-1, 2] = torch.clamp(divergence*brightness, 0, 255).to(torch.uint8)  # Blue - positive divergence
 
     return rgb_tensor
 
