@@ -75,5 +75,4 @@ $\\ p_{i,j} = 0$
 References used: 
 How to write an Eulerian fluid simulator with 200 lines of code - Ten Minute Physics - https://www.youtube.com/watch?v=iKAVRgIrUOU
 Coding Adventure: Simulating Smoke - Sebastian Lague - https://www.youtube.com/watch?v=Q78wvrQ9xsU&t=1409s
-
-
+Fluid Simulation: Siggraph 2007 Course Notes - Robert Bridson - https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf

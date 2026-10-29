@@ -5,31 +5,27 @@ import moderngl
 import torch.nn.functional as F
 import numpy as np
 from PIL import Image
+from time import perf_counter
 
 
 
 # read config file
 # for now, hardcode variables
-FPS = 15
+FPS = 30
 
 timestep=1.0/FPS
 
 x_cells = 200
 y_cells = 150
 
-diffusion_steps = 10
-diffusion_overrelaxation = 1.6
+diffusion_steps = 25
+diffusion_overrelaxation = 1.8
 advection_factor = 1
 
-cell_width = 1.0
 density = 3
 
-
-VELOCITY_X = 0
-VELOCITY_Y = 1
-DENSITY = 2
-CELL_TYPE = 3
-PRESSURE = 4
+#benchmarking
+pressure_solve_ms = 0.0
 
 #configure torch
 
@@ -43,11 +39,32 @@ print(f"Using device: {device}")
 
 # dims: velx,vely, density, cell type, pressure
 
+VELOCITY_X = 0
+VELOCITY_Y = 1
+DENSITY = 2
+CELL_TYPE = 3
+PRESSURE = 4
+
 # y  x-->     
 # |  
 # V  
 
 # cell type - 0 solid, 1 fluid
+
+#needed for advection - dims x,y
+
+#position is normalized:
+cell_width = 1.0
+
+pos_tensor = torch.zeros((2, y_cells, x_cells), device=device)
+pos_middle_tensor = torch.zeros((2, y_cells, x_cells), device=device)
+
+pos_tensor[0] = torch.arange(x_cells, device=device).unsqueeze(0).repeat(y_cells, 1)
+pos_tensor[1] = torch.arange(y_cells, device=device).unsqueeze(1).repeat(1, x_cells)
+
+pos_middle_tensor[0] = torch.arange(x_cells, device=device).unsqueeze(0).repeat(y_cells, 1) + (0.5)
+pos_middle_tensor[1] = torch.arange(y_cells, device=device).unsqueeze(1).repeat(1, x_cells) + (0.5)
+
 
 state = torch.zeros((5, y_cells, x_cells), device=device)
 
@@ -55,7 +72,7 @@ state = torch.zeros((5, y_cells, x_cells), device=device)
 
 state[0] = torch.zeros((y_cells, x_cells), device=device)
 state[1] = torch.zeros((y_cells, x_cells), device=device)
-state[2] = density * torch.ones((y_cells, x_cells), device=device)
+#state[2] = density * torch.ones((y_cells, x_cells), device=device)
 
 #keep border cells solid (adds padding)
 #need extra padding on left and bottom for diffusion calculatiom
@@ -70,7 +87,20 @@ state[3, 1:-1, 1:-1] = 1
 #  ⏹⬚⬚⬚⬚⬚⬚⬚⬚⬚⏹
 #  ⏹⏹⏹⏹⏹⏹⏹⏹⏹⏹⏹
 
+#cells use staggered x and y velocities
 
+#        cell (i,j)
+#
+#    ----- x(i,j) ------
+#    |        |         |
+#    |        V         |
+# y(i,j) ->            y(i+1,j) ->
+#    |                  |
+#    |                  |
+#    |                  |
+#    ----- x(i,j+1) -----
+#             |
+#             V
 
 
 
@@ -114,59 +144,83 @@ state[VELOCITY_Y, :, -1] = 0
 
 #simulation
 
+#diffusion setup
+row_indices = torch.arange(1, y_cells - 1, device=device).unsqueeze(1)
+column_indices = torch.arange(1, x_cells - 1, device=device).unsqueeze(0)
+red_cells = (row_indices + column_indices) % 2 == 0
+black_cells = ~red_cells
+
+
+
 def update():
     global state
 
     #add_flow()
 
-    add_force()
+    #add_force()
 
     diffusion()
 
-    advection()
+    velocity_advection()
+
+    smoke_advection()
 
 
 def diffusion():
 
-    global state
+    global state, pressure_solve_ms
 
     #diffusion gives weird checkerboard pattern -> fix later
-
-    for _ in range(diffusion_steps):
-
-       findpressure()
-
-    updatevelocity()
-
-
-
-
-def findpressure():
-
-    global state
-
-    #gauss-seidel iteration
-
-    #pressure equation: average neighbor pressure - (density)(width / timestep) * (divergence)
-
-    #no inflow from borders
-
-    divergence_tensor = diffusion_overrelaxation * (state[0, 1:-1, 2:] * state[CELL_TYPE, 1:-1, 1:-1]
-                                                    - state[0, 1:-1, 1:-1] * state[CELL_TYPE, 1:-1, :-2]
-                                                    + state[1, 2:, 1:-1] * state[CELL_TYPE, 1:-1, 1:-1]
-                                                    - state[1, 1:-1, 1:-1] * state[CELL_TYPE, :-2, 1:-1])
+    
+    divergence_tensor = (state[0, 1:-1, 2:] * state[CELL_TYPE, 1:-1, 1:-1]
+                        - state[0, 1:-1, 1:-1] * state[CELL_TYPE, 1:-1, :-2]
+                        + state[1, 2:, 1:-1] * state[CELL_TYPE, 1:-1, 1:-1]
+                        - state[1, 1:-1, 1:-1] * state[CELL_TYPE, :-2, 1:-1])
 
     kernel_matrix = torch.tensor(         [[0.0, 1, 0.0],
-                                          [1, 0.0, 1],
-                                          [0.0, 1, 0.0]], device=device)
-    
+                                              [1, 0.0, 1],
+                                              [0.0, 1, 0.0]], device=device)
+        
     kernel = kernel_matrix.view(1, 1, 3, 3)
 
     neighbors_matrix = F.conv2d(state[CELL_TYPE].unsqueeze(0).unsqueeze(0), kernel).squeeze()
 
-    average_pressure_tensor = F.conv2d(state[4].unsqueeze(0).unsqueeze(0), kernel).squeeze() * state[CELL_TYPE, 1:-1, 1:-1] # objects should have 0 pressure
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    start = perf_counter()
+
+    for _ in range(diffusion_steps):
+
+       findpressure(divergence_tensor, neighbors_matrix,red_cells,black_cells)
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    pressure_solve_ms = (perf_counter() - start) * 1000
     
-    state[4, 1:-1, 1:-1] = (average_pressure_tensor - (density * cell_width / timestep) * divergence_tensor) / neighbors_matrix
+    updatevelocity()
+
+def findpressure(divergence_tensor, neighbors_matrix, red_cells, black_cells):
+
+    global state
+
+    #gauss-seidel iteration
+    #potential optimizations - multigrid solver
+    #                        - store edge data within tensor                   
+
+    #pressure equation: average neighbor pressure - (density)(width / timestep) * (divergence)
+    #update red cells
+
+    average_pressure_tensor =  (state[PRESSURE, 1:-1, :-2] + state[PRESSURE, 1:-1, 2:] + state[PRESSURE, :-2, 1:-1] + state[PRESSURE, 2:, 1:-1]) * state[CELL_TYPE, 1:-1, 1:-1] # objects should have 0 pressuree
+
+    new_pressure_tensor = (average_pressure_tensor[red_cells] - (density * cell_width / timestep) * divergence_tensor[red_cells]) / neighbors_matrix[red_cells]
+    state[PRESSURE, 1:-1, 1:-1][red_cells] += diffusion_overrelaxation * (new_pressure_tensor - state[PRESSURE, 1:-1, 1:-1][red_cells])
+
+    #update black cells
+
+    average_pressure_tensor = (state[PRESSURE, 1:-1, :-2] + state[PRESSURE, 1:-1, 2:] + state[PRESSURE, :-2, 1:-1] + state[PRESSURE, 2:, 1:-1]) * state[CELL_TYPE, 1:-1, 1:-1] # objects should have 0 pressure
+
+    new_pressure_tensor = (average_pressure_tensor[black_cells] - (density * cell_width / timestep) * divergence_tensor[black_cells]) / neighbors_matrix[black_cells]
+    state[PRESSURE, 1:-1, 1:-1][black_cells] += diffusion_overrelaxation * (new_pressure_tensor - state[PRESSURE, 1:-1, 1:-1][black_cells])
 
 def updatevelocity():
 
@@ -176,19 +230,90 @@ def updatevelocity():
     state[VELOCITY_Y, 1:-1, 1:-1] -= (timestep / (density * cell_width)) * (state[PRESSURE, 1:-1, 1:-1] - state[PRESSURE, :-2, 1:-1]) * state[CELL_TYPE,1:-1,1:-1] * state[CELL_TYPE,:-2,1:-1]
 
 
-
-def advection():
+def velocity_advection():
     global state
-
-    #move density along the velocity field
 
     #semi-lagrangian advection
 
-    #v_avg_tensor = 
+    #previous location can be approximated as x - t*u  (assume straight path)
+    #find average velocity at this position
+    #use that average velocity as new u
+
+    vy_avg_tensor = 0.25 * (state[VELOCITY_Y, 1:-1, 1:-1] + state[VELOCITY_Y, 1:-1, :-2] + state[VELOCITY_Y, 2:, 1:-1] + state[VELOCITY_Y, 2:, :-2])
+    vx_avg_tensor = 0.25 * (state[VELOCITY_X, 1:-1, 1:-1] + state[VELOCITY_X, 1:-1, 2:] + state[VELOCITY_X, :-2, 1:-1] + state[VELOCITY_X, :-2, 2:])
+
+    prev_x = (pos_middle_tensor[0, 1:-1, 1:-1] - timestep * state[VELOCITY_X, 1:-1, 1:-1]) - 0.5
+    prev_y = pos_tensor[1, 1:-1, 1:-1] - timestep * vy_avg_tensor
+
+    #interpolate x-vel at previous position
+
+    x0 = prev_x.floor().long()
+    x1 = x0 + 1
+    xfrac = prev_x - x0.float()
+
+    y0 = prev_y.floor().long()
+    y1 = y0 + 1
+    yfrac = prev_y - y0.float()
+
+    vx00 = state[VELOCITY_X, y0, x0]
+    vx10 = state[VELOCITY_X, y0, x1]
+    vx01 = state[VELOCITY_X, y1, x0]
+    vx11 = state[VELOCITY_X, y1, x1]
+
+    vx = (1 - xfrac) * (1 - yfrac) * vx00 + xfrac * (1 - yfrac) * vx10 + (1 - xfrac) * yfrac * vx01 + xfrac * yfrac * vx11
+
+    state[VELOCITY_X, 1:-1, 1:-1] = vx * state[CELL_TYPE, 1:-1, 1:-1]
 
 
+    #interpolate y-vel at previous position
 
+    prev_x = pos_tensor[0,1:-1,1:-1] - timestep * vx_avg_tensor
+    prev_y = (pos_middle_tensor[1,1:-1,1:-1] - timestep * state[VELOCITY_Y, 1:-1, 1:-1]) - 0.5
 
+    x0 = prev_x.floor().long()
+    x1 = x0 + 1
+    xfrac = prev_x - x0.float()
+
+    y0 = prev_y.floor().long()
+    y1 = y0 + 1
+    yfrac = prev_y - y0.float()
+
+    vy00 = state[VELOCITY_Y, y0, x0]
+    vy10 = state[VELOCITY_Y, y0, x1]
+    vy01 = state[VELOCITY_Y, y1, x0]
+    vy11 = state[VELOCITY_Y, y1, x1]
+
+    vy = (1 - xfrac) * (1 - yfrac) * vy00 + xfrac * (1 - yfrac) * vy10 + (1 - xfrac) * yfrac * vy01 + xfrac * yfrac * vy11
+
+    state[VELOCITY_Y, 1:-1, 1:-1] = vy * state[CELL_TYPE, 1:-1, 1:-1]
+  
+def smoke_advection():
+    global state
+
+    vx_avg_tensor = 0.5 * (state[VELOCITY_X, 1:-1, 1:-1] + state[VELOCITY_X, 1:-1, 2:])
+    vy_avg_tensor = 0.5 * (state[VELOCITY_Y, 1:-1, 1:-1] + state[VELOCITY_Y, 2:, 1:-1])
+
+    prev_x = pos_tensor[0, 1:-1, 1:-1] - timestep * vx_avg_tensor
+    prev_y = pos_tensor[1, 1:-1, 1:-1] - timestep * vy_avg_tensor
+
+    x0 = prev_x.floor().long()
+    x1 = x0 + 1
+    xfrac = prev_x - x0.float()
+
+    y0 = prev_y.floor().long()
+    y1 = y0 + 1
+    yfrac = prev_y - y0.float()
+
+    density00 = state[DENSITY, y0, x0]
+    density10 = state[DENSITY, y0, x1]
+    density01 = state[DENSITY, y1, x0]
+    density11 = state[DENSITY, y1, x1]
+
+    density = (1 - xfrac) * (1 - yfrac) * density00 + xfrac * (1 - yfrac) * density10 + (1 - xfrac) * yfrac * density01 + xfrac * yfrac * density11
+
+    state[DENSITY, 1:-1, 1:-1] = density * state[CELL_TYPE, 1:-1, 1:-1]
+
+     
 def add_force():
     #just gravity for now
 
@@ -203,7 +328,6 @@ def add_flow():
     state[0] += flow[0] * timestep
     state[1] += flow[1] * timestep
     state[2] += flow[2] * timestep
-
 
 # draw simulation
 
@@ -277,14 +401,25 @@ def drawvelfield():
     rgb_tensor[..., 1] = display_vel_y  # Green
 
     return rgb_tensor
-    
-def drawdensityfield():
-    display_density = torch.clamp(state[2] * 15, 0, 255).to(torch.uint8) # density magnitude, somewhat normalized
+
+def drawspeedfield():
+    display_speed = torch.sqrt(state[VELOCITY_X]**2 + state[VELOCITY_Y]**2)
+    display_speed = torch.clamp(display_speed * 15, 0, 255).to(torch.uint8) # speed magnitude, somewhat normalized
 
     rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
-    rgb_tensor[..., 0] = display_density      # Red
-    rgb_tensor[..., 1] = display_density // 2  # Green
-    rgb_tensor[..., 2] = display_density // 4  # Blue
+    rgb_tensor[..., 0] = display_speed  # Red
+    rgb_tensor[..., 1] = display_speed  # Green
+    rgb_tensor[..., 2] = display_speed * 0.5  # Blue
+
+    return rgb_tensor
+
+def drawdensityfield():
+    display_density = torch.clamp(state[2] * 255, 0, 255).to(torch.uint8) # density magnitude, somewhat normalized
+
+    rgb_tensor = torch.zeros((y_cells, x_cells, 3), dtype=torch.uint8, device=device)
+    rgb_tensor[..., 0] = display_density   # Red
+    rgb_tensor[..., 1] = display_density   # Green
+    rgb_tensor[..., 2] = display_density   # Blue
 
     return rgb_tensor
 
@@ -360,7 +495,7 @@ while running:
 
         if 0 <= gridmx < x_cells-1 and 0 <= gridmy < y_cells-1:
             
-            state[4, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += 5.0 # Add pressure in a 4x4 area around mouse
+            state[DENSITY, gridmy-3:gridmy+4, gridmx-3:gridmx+4] += 1 # Add density in a 4x4 area around mouse
 
             if prev_mouse_pos:
                 pmx, pmy = prev_mouse_pos
@@ -375,7 +510,7 @@ while running:
 
     update()
 
-    rgb_tensor = drawpressurefield()
+    rgb_tensor = drawdensityfield()
 
     #write textude to GPU memory
     texture.write(rgb_tensor.contiguous().cpu().numpy())
@@ -389,7 +524,10 @@ while running:
     
     pygame.display.flip()
     
-    pygame.display.set_caption(f"GPU Fluid Sim | FPS: {clock.get_fpsCustom():.1f}" if hasattr(clock, 'get_fpsCustom') else f"GPU Fluid Sim | FPS: {clock.get_fps():.1f}")
+    pygame.display.set_caption(
+        f"GPU Fluid Sim | FPS: {clock.get_fps():.1f} | "
+        f"Pressure solve: {pressure_solve_ms:.2f} ms"
+    )
     clock.tick(FPS)
 
 pygame.quit()
