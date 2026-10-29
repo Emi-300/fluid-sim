@@ -370,10 +370,10 @@ def add_flow():
     #apply flow to state
     #only apply where flow is nonzero
 
-    state[stype.VELOCITY_X] = torch.where(flow[stype.VELOCITY_X] != 0, flow[stype.VELOCITY_X], state[stype.VELOCITY_X])
-    state[stype.VELOCITY_Y] = torch.where(flow[stype.VELOCITY_Y] != 0, flow[stype.VELOCITY_Y], state[stype.VELOCITY_Y])
-    state[stype.DENSITY] = torch.where(flow[stype.DENSITY] != 0, flow[stype.DENSITY], state[stype.DENSITY])
-    state[stype.PRESSURE] = torch.where(flow[stype.PRESSURE] != 0, flow[stype.PRESSURE], state[stype.PRESSURE])
+    state[stype.VELOCITY_X] = torch.where(flow[0] != 0, flow[0], state[stype.VELOCITY_X])
+    state[stype.VELOCITY_Y] = torch.where(flow[1] != 0, flow[1], state[stype.VELOCITY_Y])
+    state[stype.DENSITY] = torch.where(flow[2] != 0, flow[2], state[stype.DENSITY])
+    state[stype.PRESSURE] = torch.where(flow[3] != 0, flow[3], state[stype.PRESSURE])
 
 # draw simulation
 
